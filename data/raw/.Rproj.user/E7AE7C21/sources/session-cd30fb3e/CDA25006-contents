@@ -1,0 +1,170 @@
+library(ggplot2)
+library(tidyverse)
+library(FactoMineR)
+library(factoextra)
+
+# Working directory should be set using Session -> Set Working Directory. Not hard coded. 
+# Better practices suggest your file structure look like this:
+# .
+# └── Project name/
+#   ├── data/
+#   │   ├── external
+#   │   ├── interim
+#   │   ├── processed
+#   │   └── raw
+#   ├── docs
+#   ├── models
+#   └── reports/
+#       ├── images
+#       └── graphs
+
+#### This sets a global theme for all my plots.#### 
+theme_set(theme_bw() +
+            theme(
+              plot.background = element_blank()
+              ,panel.grid.major = element_blank()
+              ,panel.grid.minor = element_blank()
+              ,panel.background = element_blank()
+              ,axis.text.x  = element_text(angle=90, vjust=0.5, size=8)
+            ))
+
+#### Read in the raw monthly well data.####
+#read my csv as waterchem_data
+
+waterchem_data <- read_csv("/Users/ivana/Desktop/stakeholder/water_quality/data/raw/DRAFT 2023-01-20 BEMP geochemistry anions data set.csv.csv",
+                           na = c('.','-999','NA'))
+
+
+#BEMPWaterQuality/data
+#
+### Below detection limits were set to NA ####
+
+####everything read in correctly####
+# Check to make sure everything is read in correctly. Are your number data reading in as
+# <dbl>? 
+waterchem_data
+
+waterchem_data$Date <- as.Date( paste( waterchem_data$Month, waterchem_data$Day,
+                                       waterchem_data$Year,
+                                       sep = "." ), format = "%m.%d.%Y" )
+waterchem_data
+
+####question focus####
+
+# Only focusing on these columns but you might want different columns depending on what
+# your question is. 
+waterchem_select <- waterchem_data %>% select(c(`Turbidity (NTU)`,`DO (mg/L)`,`pH 1`, `Chloride (mg/L)`,
+                                                `Bromide (mg/L)`,`Nitrate-N (mg/L)`,`Phosphate-P (mg/L)`,
+                                                `Sulfate (mg/L)`, Year, Month, `Sampling type`,
+                                                `Site Name`))
+waterchem_select
+
+####NA####
+
+# Here were are dropping out rows that have NAs in them. Be careful when doing this. You may toss
+# out data you want retained. 
+waterchem_select_complete <- waterchem_select %>% 
+  drop_na()
+
+waterchem_select_complete
+
+#### Check all the column names####
+colnames(waterchem_select_complete)
+
+#### Let's look at how the data is distributed.####
+waterchem_select_complete %>% ggplot(aes(x=`Turbidity (NTU)`)) + geom_histogram()
+
+waterchem_select_complete %>% ggplot(aes(x=`DO (mg/L)`)) + geom_histogram()
+
+waterchem_select_complete %>% ggplot(aes(x=`Sulfate (mg/L)`)) + geom_histogram()
+
+
+#### Notice in sampling types####
+unique(waterchem_select_complete$`Sampling type`)
+# things are messed up. So North and North well are the same kind of sampling type. So we need to
+# clean this up. 
+
+waterchem_select_comp_clean <- waterchem_select_complete %>% 
+  mutate("Sample type" = case_when(`Sampling type` == "Center" ~ "Well",
+                                   `Sampling type` == "Center well" ~ "Well",
+                                   `Sampling type` == "North" ~ "Well",
+                                   `Sampling type` == "North well" ~ "Well",
+                                   `Sampling type` == "South" ~ "Well",
+                                   `Sampling type` == "South well" ~ "Well",
+                                   `Sampling type` == "East" ~ "Well",
+                                   `Sampling type` == "East well" ~ "Well",
+                                   `Sampling type` == "West" ~ "Well",
+                                   `Sampling type` == "West well" ~ "Well",
+                                   `Sampling type` == "Ditch" ~ "Ditch",
+                                   `Sampling type` == "River" ~ "River",
+                                   `Sampling type` == "South Surf" ~ "Well",
+                                   `Sampling type` == "North Surf" ~ "Well"))
+
+waterchem_select_comp_clean
+
+#### Check to make sure the mutate worked.#### 
+unique(waterchem_select_comp_clean$`Sample type`)
+
+#### What does the data look like across sample types.####
+waterchem_select_comp_clean %>% ggplot(.,aes(x=`Sample type`,y=`Turbidity (NTU)`)) + 
+  geom_boxplot()
+
+waterchem_select_comp_clean %>% ggplot(.,aes(x=`Sample type`,y=`Nitrate-N (mg/L)`)) + 
+  geom_boxplot()
+
+# What about by month?
+
+waterchem_select_comp_clean %>% ggplot(.,aes(x=as.factor(Month), y=`Nitrate-N (mg/L)`)) + 
+  geom_boxplot() + facet_wrap(~`Sample type`)
+
+###
+#### Principle component analysis (PCA)####
+
+# This runs a PCA. A PCA returns an analytic solution while a NMDS is an iterative method of data
+# dimension reduction. Bothh have their place in a workflow and largely depend on the type of data
+# you have and what questions you are trying to address. 
+
+# Most ordination packages in R require only numeric columns. So we are going to subset the
+# data.
+
+waterchem_pca_select <- waterchem_select_comp_clean %>% 
+  select(c(`Turbidity (NTU)`,`DO (mg/L)`,`pH 1`, `Chloride (mg/L)`,
+           `Bromide (mg/L)`,`Nitrate-N (mg/L)`,`Phosphate-P (mg/L)`,
+           `Sulfate (mg/L)`))
+
+waterchem_pca_select 
+
+res.pca <- PCA(waterchem_pca_select)
+res.pca
+
+fviz_pca_var(res.pca, col.var="contrib")
+
+fviz_pca_biplot(res.pca,  geom = "text")
+
+# Grabs the PCA coordinates to we can wrangle them into a tibble for fancier plotting.
+# This is just for the sample site plot! Called PCA graph of individuals by FactoMineR
+pca_coord <- as.tibble(res.pca$ind$coord)
+pca_coord
+
+# Now we can add columns to this tibble from our original data. The order of the samples
+# is preserved. 
+
+pca_coord_env <- pca_coord %>% add_column("Site" = waterchem_select_comp_clean$`Site Name`,
+                                          "Sampling type" = waterchem_select_comp_clean$`Sample type`,
+                                          "Month" = waterchem_select_comp_clean$Month)
+pca_coord_env
+
+# We can plot the PCA of the samples and color by variable using ggplot now. 
+pca_coord_env %>% ggplot(aes(x=Dim.1, y=Dim.2, color=as.factor(`Sampling type`))) +
+  geom_point() + xlab("PCA1") + ylab("PCA2") + 
+  
+  # Here we can use facet_wrap to split out the sampling types. Typically this would be an insert
+  # on the main (unfaceted) plot.
+  pca_coord_env %>% ggplot(aes(x=Dim.1, y=Dim.2, color=as.factor(`Sampling type`))) +
+  geom_point() + facet_wrap(~`Sampling type`, ncol = 1)
+
+
+# The cowplot package is a really powerful extension to ggplot. It makes data visualization
+# a bit easier.
+
+
